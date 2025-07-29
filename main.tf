@@ -108,3 +108,114 @@ resource "aws_lambda_event_source_mapping" "sqs_trigger" {
   batch_size       = 10
   enabled          = true
 }
+
+
+
+# IAM Role for Lambda
+resource "aws_iam_role" "lambda_role_v10" {
+  name = "StateMachine"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Action = "sts:AssumeRole",
+      Effect = "Allow",
+      Principal = {
+        Service = "states.amazonaws.com"
+      }
+    }]
+  })
+}
+
+
+resource "aws_iam_policy" "custom_lambda_microservice_v10" {
+  name        = "CustomLambdaLogPolicyMicroserviceStateMachinev10"
+  description = "Custom policy for specific Microservice CloudWatch Logs access"
+  policy      = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect   = "Allow",
+        Action   = [
+          "sqs:SendMessage"
+        ],
+        Resource = "arn:aws:sqs:us-east-1:332802448540:Pedidos"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_policy" "custom_lambda_microservice_v30" {
+  name        = "CustomLambdaLogPolicyMicroserviceStateMachinev30"
+  description = "Custom policy for specific Microservice CloudWatch Logs access"
+  policy      = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect   = "Allow",
+        Action   = [
+          "xray:PutTraceSegments",
+          "xray:PutTelemetryRecords",
+          "xray:GetSamplingRules",
+          "xray:GetSamplingTargets"
+        ],
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "attach_custom_policyv20" {
+  role       = aws_iam_role.lambda_role_v10.name
+  policy_arn = aws_iam_policy.custom_lambda_microservice_v10.arn
+}
+
+resource "aws_iam_role_policy_attachment" "attach_custom_policyv30" {
+  role       = aws_iam_role.lambda_role_v10.name
+  policy_arn = aws_iam_policy.custom_lambda_microservice_v30.arn
+}
+
+
+# ...
+
+resource "aws_sfn_state_machine" "sfn_state_machinev20" {
+  name     = "my-state-machine"
+  role_arn = aws_iam_role.lambda_role_v10.arn
+
+  definition = <<EOF
+{
+  "Comment": "An example of the Amazon States Language for starting a callback with SQS",
+  "StartAt": "Check Inventory",
+  "States": {
+    "Check Inventory": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sqs:sendMessage.waitForTaskToken",
+      "Parameters": {
+        "QueueUrl": "${aws_sqs_queue.my_queue.id}",
+        "MessageBody": {
+          "MessageTitle": "Callback Task started by Step Function",
+          "TaskToken.$": "$$.Task.Token"
+        }
+      },
+      "Next": "Notify Success",
+      "Catch": [
+        {
+          "ErrorEquals": [ "States.ALL" ],
+          "Next": "Notify Failure"
+        }
+      ]
+    },
+      "Notify Success": {
+        "Type": "Pass",
+        "Result": "Callback Task started by Step Functions succeeded",
+        "End": true
+      },
+      "Notify Failure": {
+        "Type": "Pass",
+        "Result": "Callback Task started by Step Functions failed",
+        "End": true
+      }
+  }
+}
+EOF
+}
